@@ -47,7 +47,7 @@ Xandeum Nexus is open-source and designed to run anywhere. You do not need a Goo
 
 ### 1. Clone the Repository
 ```bash
-git clone [https://github.com/0xlajaz/xandeum-nexus.git](https://github.com/0xlajaz/xandeum-nexus.git)
+git clone https://github.com/0xlajaz/xandeum-nexus.git
 cd xandeum-nexus
 ```
 ### 2. Install Dependencies
