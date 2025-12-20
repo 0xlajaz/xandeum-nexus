@@ -1,121 +1,245 @@
 import aiohttp
 import asyncio
 import time
-from typing import List, Dict, Optional
-from app.config import settings
+import re
+from typing import List, Dict, Optional, Tuple
+from app.config import settings, logger
 
 # Constant for Byte to GB conversion
 GB_CONVERSION = 1024**3
+CREDITS_API_URL = "https://podcredits.xandeum.network/api/pods-credits"
+
+def parse_version(version_str: str) -> Tuple[int, int, int]:
+    """
+    Safely parse version string to tuple for comparison.
+    Examples: "0.7.0" -> (0, 7, 0), "v0.8.1" -> (0, 8, 1)
+    Returns (0, 0, 0) if parsing fails.
+    """
+    try:
+        # Remove common prefixes and extract numbers
+        clean_version = re.sub(r'^v', '', version_str.strip())
+        parts = re.findall(r'\d+', clean_version)
+        
+        if len(parts) >= 3:
+            return (int(parts[0]), int(parts[1]), int(parts[2]))
+        elif len(parts) == 2:
+            return (int(parts[0]), int(parts[1]), 0)
+        elif len(parts) == 1:
+            return (int(parts[0]), 0, 0)
+    except (ValueError, AttributeError) as e:
+        logger.warning(f"Failed to parse version '{version_str}': {e}")
+    
+    return (0, 0, 0)
+
+async def fetch_pod_credits(session: aiohttp.ClientSession) -> Dict[str, int]:
+    """
+    Fetches official Reputation Credits from Xandeum API.
+    Returns a dictionary mapping pod_id (pubkey) -> credits.
+    """
+    try:
+        async with session.get(CREDITS_API_URL, timeout=aiohttp.ClientTimeout(total=5)) as response:
+            if response.status == 200:
+                data = await response.json()
+                credits_map = {}
+                
+                for item in data.get('pods_credits', []):
+                    pid = item.get('pod_id')
+                    c = item.get('credits', 0)
+                    if pid:
+                        credits_map[pid] = c
+                
+                logger.info(f"Successfully fetched credits for {len(credits_map)} pods")
+                return credits_map
+            else:
+                logger.warning(f"Credits API returned status {response.status}")
+                
+    except asyncio.TimeoutError:
+        logger.error("Timeout fetching pod credits - API took longer than 5 seconds")
+    except aiohttp.ClientError as e:
+        logger.error(f"Network error fetching pod credits: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error fetching pod credits: {e}", exc_info=True)
+    
+    return {}
 
 async def fetch_node_stats(session: aiohttp.ClientSession, ip: str) -> Optional[List[Dict]]:
     """
     Executes JSON-RPC call to a target node to retrieve pod statistics.
-    Includes latency measurement.
+    Includes latency measurement and improved error handling.
     """
     url = f"http://{ip}:{settings.RPC_PORT}{settings.RPC_ENDPOINT}"
     payload = {"jsonrpc": "2.0", "method": "get-pods-with-stats", "id": 1}
     
     try:
         start_time = time.time()
-        timeout = aiohttp.ClientTimeout(total=2.5) # Strict timeout to prevent hanging
+        timeout = aiohttp.ClientTimeout(total=2.5)
         
         async with session.post(url, json=payload, timeout=timeout) as response:
-            latency = (time.time() - start_time) * 1000 # ms
+            latency = (time.time() - start_time) * 1000  # ms
             
             if response.status == 200:
                 data = await response.json()
                 result = data.get('result', {})
                 pods = result.get('pods', []) if isinstance(result, dict) else result
                 
+                if not pods:
+                    logger.debug(f"Node {ip} returned empty pod list")
+                
                 # Metadata Injection
                 for pod in pods:
                     pod['_reporting_latency'] = latency
                     pod['_source_node'] = ip
+                
+                logger.debug(f"Successfully fetched {len(pods)} pods from {ip} (latency: {latency:.2f}ms)")
                 return pods
-    except Exception:
-        # Silently fail for unreachable nodes (common in P2P networks)
-        pass
+            else:
+                logger.warning(f"Node {ip} returned HTTP {response.status}")
+                
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout connecting to node {ip} (>2.5s)")
+    except aiohttp.ClientError as e:
+        logger.warning(f"Network error connecting to {ip}: {type(e).__name__}")
+    except Exception as e:
+        logger.error(f"Unexpected error fetching stats from {ip}: {e}", exc_info=True)
+    
     return None
 
-async def get_network_state() -> List[Dict]:
+async def get_network_state() -> Tuple[List[Dict], Dict[str, int]]:
     """
-    Aggregates state from all seed nodes concurrently.
-    Implements deduplication logic to handle multiple reports for the same pubkey.
+    Aggregates state from all seed nodes AND fetches official credits concurrently.
+    Returns: (nodes_list, credits_map)
     """
+    logger.info(f"Fetching network state from {len(settings.seed_nodes)} seed nodes")
+    
     async with aiohttp.ClientSession() as session:
-        # Parallel execution
+        # Parallel execution: Fetch RPC stats AND Pod Credits at the same time
         tasks = [fetch_node_stats(session, ip) for ip in settings.seed_nodes]
-        results = await asyncio.gather(*tasks)
+        credits_task = fetch_pod_credits(session)
+        
+        # Unpack results
+        results = await asyncio.gather(*tasks, credits_task, return_exceptions=True)
+        
+        # Separate RPC results from credits
+        rpc_results = results[:-1]
+        credits_result = results[-1]
+        
+        # Handle credits result
+        if isinstance(credits_result, Exception):
+            logger.error(f"Credits fetch failed with exception: {credits_result}")
+            credits_map = {}
+        else:
+            credits_map = credits_result
         
         unique_nodes = {}
+        total_pods_found = 0
         
-        for res in results:
-            if not res: continue
+        for idx, res in enumerate(rpc_results):
+            # Handle exceptions from individual node fetches
+            if isinstance(res, Exception):
+                logger.error(f"Seed node {settings.seed_nodes[idx]} failed: {res}")
+                continue
+            
+            if not res:
+                continue
+            
+            total_pods_found += len(res)
+            
             for pod in res:
                 pubkey = pod.get('pubkey')
-                if not pubkey: continue 
+                if not pubkey:
+                    logger.warning(f"Pod without pubkey from {pod.get('_source_node', 'unknown')}")
+                    continue 
                 
-                # --- DEDUPLICATION STRATEGY ---
+                # --- IMPROVED DEDUPLICATION STRATEGY ---
                 if pubkey not in unique_nodes:
                     unique_nodes[pubkey] = pod
                 else:
-                    # Conflict resolution: Prefer newer version, then higher storage
                     curr = unique_nodes[pubkey]
-                    new_ver = pod.get('version', '0.0.0') or '0.0.0'
-                    curr_ver = curr.get('version', '0.0.0') or '0.0.0'
                     
+                    # Parse versions for proper comparison
+                    new_ver = parse_version(pod.get('version', '0.0.0') or '0.0.0')
+                    curr_ver = parse_version(curr.get('version', '0.0.0') or '0.0.0')
+                    
+                    # Prioritize newer version
                     if new_ver > curr_ver:
                         unique_nodes[pubkey] = pod
+                        logger.debug(f"Updated node {pubkey[:8]} to newer version {new_ver}")
                     elif new_ver == curr_ver:
-                        new_storage = float(pod.get('storage_committed') or 0)
-                        curr_storage = float(curr.get('storage_committed') or 0)
-                        if new_storage > curr_storage:
-                            unique_nodes[pubkey] = pod
+                        # If same version, prioritize higher storage
+                        try:
+                            new_storage = float(pod.get('storage_committed') or 0)
+                            curr_storage = float(curr.get('storage_committed') or 0)
+                            if new_storage > curr_storage:
+                                unique_nodes[pubkey] = pod
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Invalid storage value for node {pubkey[:8]}: {e}")
 
-        return list(unique_nodes.values())
+        logger.info(f"Discovered {len(unique_nodes)} unique nodes from {total_pods_found} total pod entries")
+        return list(unique_nodes.values()), credits_map
 
 def calculate_heidelberg_score(node: Dict, net_stats: Dict) -> Dict:
     """
     Implements the 'Heidelberg Score' algorithm to quantify node health.
-    
-    Factors:
-    1. Version Compliance (0.7/0.8+)
-    2. Uptime Reliability (Relative to network max)
-    3. Storage Commitment
-    4. Paging Efficiency (Hit Rate)
+    Includes improved validation and error handling.
     """
-    # 1. Version Scoring
-    version = str(node.get('version') or '0.0.0')
-    is_valid_version = ('0.7' in version) or ('0.8' in version)
-    score_version = 40 if is_valid_version else 10
-    
-    # 2. Uptime Scoring
-    uptime = float(node.get('uptime') or 0)
-    max_uptime = net_stats.get('max_uptime', 1)
-    score_uptime = (uptime / max_uptime) * 30 if max_uptime > 0 else 0
+    try:
+        # Version Score (40 points)
+        version = str(node.get('version') or '0.0.0')
+        # More robust version checking
+        is_valid_version = bool(re.search(r'0\.[89]', version))
+        score_version = 40 if is_valid_version else 10
+        
+        # Uptime Score (30 points)
+        uptime = float(node.get('uptime') or 0)
+        if uptime < 0:
+            logger.warning(f"Node {node.get('pubkey', 'unknown')[:8]} has negative uptime: {uptime}")
+            uptime = 0
+        
+        max_uptime = net_stats.get('max_uptime', 1)
+        score_uptime = (uptime / max_uptime) * 30 if max_uptime > 0 else 0
 
-    # 3. Storage Scoring
-    storage_committed = float(node.get('storage_committed') or 0)
-    target_gb = 0.1 # Baseline target
-    storage_gb_committed = storage_committed / GB_CONVERSION
-    score_storage = min((storage_gb_committed / target_gb) * 20, 20)
-    
-    # 4. Efficiency Scoring
-    hit_rate = float(node.get('paging_hit_rate') or 0.95)
-    score_paging = hit_rate * 10
-    
-    total = min(score_version + score_uptime + score_storage + score_paging, 100)
-    
-    return {
-        "total": int(total),
-        "breakdown": {
-            "v0.7_compliance": score_version,
-            "uptime_reliability": int(score_uptime),
-            "storage_weight": int(score_storage),
-            "paging_efficiency": int(score_paging)
-        },
-        "metrics": {
-            "hit_rate": hit_rate,
-            "replication_health": node.get('replication_factor', 3)
+        # Storage Score (20 points) - Based on committed capacity
+        storage_committed = float(node.get('storage_committed') or 0)
+        target_gb = 0.1  # Target: 100MB for testnet
+        storage_gb_committed = storage_committed / GB_CONVERSION
+        score_storage = min((storage_gb_committed / target_gb) * 20, 20)
+        
+        # Paging Score (10 points)
+        hit_rate = float(node.get('paging_hit_rate') or 0.95)
+        if hit_rate < 0 or hit_rate > 1:
+            logger.warning(f"Invalid hit_rate {hit_rate} for node {node.get('pubkey', 'unknown')[:8]}, clamping to [0,1]")
+            hit_rate = max(0, min(1, hit_rate))
+        score_paging = hit_rate * 10
+        
+        total = min(score_version + score_uptime + score_storage + score_paging, 100)
+        
+        return {
+            "total": int(total),
+            "breakdown": {
+                "v0.7_compliance": int(score_version),
+                "uptime_reliability": int(score_uptime),
+                "storage_weight": int(score_storage),
+                "paging_efficiency": int(score_paging)
+            },
+            "metrics": {
+                "hit_rate": hit_rate,
+                "replication_health": node.get('replication_factor', 3)
+            }
         }
-    }
+    
+    except Exception as e:
+        logger.error(f"Error calculating score for node {node.get('pubkey', 'unknown')[:8]}: {e}")
+        # Return minimal score on error
+        return {
+            "total": 0,
+            "breakdown": {
+                "v0.7_compliance": 0,
+                "uptime_reliability": 0,
+                "storage_weight": 0,
+                "paging_efficiency": 0
+            },
+            "metrics": {
+                "hit_rate": 0,
+                "replication_health": 0
+            }
+        }
