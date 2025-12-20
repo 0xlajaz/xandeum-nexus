@@ -9,6 +9,13 @@ const CopyIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
 );
 
+const BellIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+    </svg>
+);
+
 const MetricCard = ({ label, value, sub, icon }) => (
     <div className="glass p-5 rounded-xl border-l-2 border-x-primary relative overflow-hidden group hover:border-l-4 transition-all hover:bg-x-panel/80">
         <div className="flex justify-between items-start z-10 relative">
@@ -32,20 +39,24 @@ const ProgressBar = ({ value, max = 100, color = 'bg-x-primary' }) => (
 
 const NodeRow = ({ node }) => {
     const [copied, setCopied] = useState(false);
-    const isV7 = node.version.includes('0.7') || node.version.includes('0.8');
+    
+    // 1. SAFE VERSION CHECK (v0.8+)
+    const isSafeVersion = node.version.includes('0.8') || node.version.includes('0.9');
+    const BOT_USERNAME = "XandeumNexusBot"; 
 
-    // --- SCORE VARIABLES ---
+    // Score Breakdown
     const breakdown = node.score_breakdown || {};
     const vScore = breakdown['v0.7_compliance'] || 0;
     const uScore = breakdown.uptime_reliability || 0;
     const sScore = breakdown.storage_weight || 0;
     const pScore = breakdown.paging_efficiency || 0;
 
-    // --- COLOR LOGIC ---
+    // Default to Danger (Red)
     let statusColor = 'bg-x-danger shadow-[0_0_8px_rgba(255,51,102,0.5)]'; 
     let scoreColor = 'text-x-danger';
     let warningReason = "";
 
+    // 2. COLOR LOGIC
     if (node.health_score > 80) {
         statusColor = 'bg-x-primary shadow-[0_0_8px_#00FFA3]';
         scoreColor = 'text-white';
@@ -54,10 +65,21 @@ const NodeRow = ({ node }) => {
         scoreColor = 'text-yellow-500';
     }
 
+    // 3. MULTI-ISSUE WARNING LOGIC (The Fix)
     if (node.health_score < 60) {
-        if (node.uptime_sec < 86400) warningReason = "CRITICAL: Low Uptime (< 24h)";
-        else if (!isV7) warningReason = "WARNING: Outdated Version";
-        else warningReason = "Check Connection";
+        let warnings = [];
+        
+        // Check Uptime
+        if (node.uptime_sec < 86400) warnings.push("Low Uptime");
+        
+        // Check Version
+        if (!isSafeVersion) warnings.push("Outdated Ver");
+        
+        // Fallback
+        if (warnings.length === 0) warnings.push("Check Connection");
+        
+        // Join them so both show up (e.g., "Low Uptime + Outdated Ver")
+        warningReason = warnings.join(" + ");
     }
 
     const handleCopy = () => {
@@ -70,41 +92,60 @@ const NodeRow = ({ node }) => {
         <tr className="border-b border-x-border hover:bg-x-primary/5 transition-colors text-sm group relative">
             <td className="py-4 pl-4">
                 <div className="flex items-center gap-3">
+                    {/* Status Dot */}
                     <div className={`w-2.5 h-2.5 rounded-full ${statusColor}`}></div>
                     
+                    {/* Copy ID Button */}
                     <div 
                         onClick={handleCopy}
                         className="flex items-center gap-2 cursor-pointer group/copy relative px-2 py-1 rounded hover:bg-white/5 transition-all"
                         title="Click to Copy Full ID"
                     >
-                        <span className="font-mono text-gray-300 group-hover/copy:text-white transition-colors">
-                            {node.short_id}
+                        <span className="font-mono text-xs text-gray-300 group-hover/copy:text-white transition-colors">
+                            {node.pubkey}
                         </span>
                         <span className={`text-x-primary transition-all duration-300 ${copied ? 'opacity-100 scale-100' : 'opacity-0 scale-0 group-hover/copy:opacity-50'}`}>
                             {copied ? <span className="text-[10px] font-bold tracking-wider">COPIED!</span> : <CopyIcon />}
                         </span>
                     </div>
+
+                    {/* Sentinel Bell */}
+                    <a 
+                        href={`https://t.me/${BOT_USERNAME}?start=${node.pubkey}`}
+                        target="_blank"
+                        className="ml-2 p-1.5 rounded-full bg-x-panel border border-white/5 hover:border-x-primary hover:text-x-primary text-gray-500 transition-all shadow-sm group/bell relative"
+                    >
+                        <BellIcon />
+                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-[10px] bg-black border border-x-primary text-x-primary rounded opacity-0 group-hover/bell:opacity-100 pointer-events-none whitespace-nowrap">
+                            Monitor Node
+                        </span>
+                    </a>
                 </div>
+                {/* Warning Text */}
                 {node.health_score < 60 && (
                     <div className="text-[10px] text-x-danger font-mono mt-1 pl-6 uppercase tracking-wide animate-pulse">
                         ⚠️ {warningReason}
                     </div>
                 )}
             </td>
+            
             <td className="py-4">
-                <span className={`px-2 py-0.5 rounded text-xs font-mono border ${isV7 ? 'border-x-primary/30 text-x-primary bg-x-primary/10' : 'border-x-danger/50 text-x-danger bg-x-danger/10'}`}>
+                <span className={`px-2 py-0.5 rounded text-xs font-mono border ${isSafeVersion ? 'border-x-primary/30 text-x-primary bg-x-primary/10' : 'border-x-danger/50 text-x-danger bg-x-danger/10'}`}>
                     {node.version}
                 </span>
             </td>
-            <td className="py-4 font-mono text-gray-400">
-                {(node.uptime_sec / 86400).toFixed(1)}d
+            
+            <td className="py-4 font-mono text-x-primary/80 font-bold">
+                {node.reputation_credits ? node.reputation_credits.toLocaleString() : "0"}
             </td>
+            
             <td className="py-4">
                 <div className="flex flex-col">
                     <span className="text-white font-medium">{node.storage_gb} GB</span>
                     <span className="text-[10px] text-gray-500">{(node.storage_gb * 1024).toFixed(0)} MB Cached</span>
                 </div>
             </td>
+            
             <td className="py-4">
                 <div className="w-24">
                     <div className="flex justify-between text-xs mb-1">
@@ -121,38 +162,25 @@ const NodeRow = ({ node }) => {
                     <span className={`text-lg font-bold ${scoreColor}`}>
                         {node.health_score}
                     </span>
-                    
                     <div className="absolute right-0 top-full mt-2 w-56 bg-[#0F1219] border border-x-border p-4 rounded-lg shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-all duration-200 z-[100] translate-y-[-10px] group-hover/score:translate-y-0">
                         <div className="text-[10px] font-bold text-gray-400 mb-3 border-b border-white/10 pb-2 tracking-widest uppercase flex justify-between">
-                            <span>Breakdown</span>
+                            <span>Score Breakdown</span>
                         </div>
-                        
                         <div className="space-y-2 font-mono text-xs text-left">
                             <div className="flex justify-between items-center">
-                                <span className="text-gray-500 flex flex-col leading-none">
-                                    Ver <span className="text-[8px] opacity-50 mt-0.5">Target: v0.7+</span>
-                                </span>
+                                <span className="text-gray-500 flex flex-col leading-none">Ver <span className="text-[8px] opacity-50 mt-0.5">Target: v0.8+</span></span>
                                 <span className={vScore === 40 ? "text-x-primary" : "text-x-danger"}>+{vScore}</span>
                             </div>
-
                             <div className="flex justify-between items-center">
-                                <span className="text-gray-500 flex flex-col leading-none">
-                                    Up <span className="text-[8px] opacity-50 mt-0.5">vs Network Max</span>
-                                </span>
+                                <span className="text-gray-500 flex flex-col leading-none">Up <span className="text-[8px] opacity-50 mt-0.5">vs Network Max</span></span>
                                 <span className={uScore > 20 ? "text-white" : "text-x-danger"}>+{uScore}</span>
                             </div>
-
                             <div className="flex justify-between items-center">
-                                <span className="text-gray-500 flex flex-col leading-none">
-                                    Sto <span className="text-[8px] opacity-50 mt-0.5">Target: &gt;100MB</span>
-                                </span>
+                                <span className="text-gray-500 flex flex-col leading-none">Sto <span className="text-[8px] opacity-50 mt-0.5">Target: &gt;100MB</span></span>
                                 <span className="text-white">+{sScore}</span>
                             </div>
-
                             <div className="flex justify-between items-center">
-                                <span className="text-gray-500 flex flex-col leading-none">
-                                    Page <span className="text-[8px] opacity-50 mt-0.5">Hit Rate</span>
-                                </span>
+                                <span className="text-gray-500 flex flex-col leading-none">Page <span className="text-[8px] opacity-50 mt-0.5">Hit Rate</span></span>
                                 <span className="text-x-accent">+{pScore}</span>
                             </div>
                         </div>
@@ -216,7 +244,12 @@ const App = () => {
         window.myChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: histData.timestamps.map(t => new Date(t * 1000).toLocaleTimeString()),
+                labels: histData.timestamps.map(t => new Date(t * 1000).toLocaleString('en-US', {
+                    month: 'short', 
+                    day: 'numeric', 
+                    hour: 'numeric', 
+                    minute: 'numeric'
+                })),
                 datasets: [{
                     label: 'Network Health',
                     data: histData.health,
@@ -255,10 +288,22 @@ const App = () => {
 
     const handleExport = () => {
         if (!data || !data.nodes) return;
+
+        const escapeCsv = (str) => {
+            if (typeof str !== 'string') return str;
+            // Prevent Excel Formula Injection (starting with =, +, -, @)
+            if (/^[=+\-@]/.test(str)) {
+                str = "'" + str; 
+            }
+            // Escape double quotes by doubling them
+            return `"${str.replace(/"/g, '""')}"`; 
+        };
+
         const csvContent = "data:text/csv;charset=utf-8," 
-            + "NodeID,IP,Version,Uptime(sec),Storage(GB),HitRate,HealthScore\n"
+            + "NodeID,IP,Version,Uptime(sec),Reputation,Storage(GB),HitRate,HealthScore\n"
             + data.nodes.map(n => 
-                `${n.pubkey},${n.ip},${n.version},${n.uptime_sec},${n.storage_gb},${n.paging_metrics.hit_rate},${n.health_score}`
+                // Apply escapeCsv to strings
+                `${n.pubkey},${n.ip},${escapeCsv(n.version)},${n.uptime_sec},${n.reputation_credits},${n.storage_gb},${n.paging_metrics.hit_rate},${n.health_score}`
             ).join("\n");
         
         const encodedUri = encodeURI(csvContent);
@@ -273,7 +318,9 @@ const App = () => {
         if (!data) return [];
         return data.nodes.filter(n => {
             const matchesSearch = n.pubkey.toLowerCase().includes(searchTerm.toLowerCase());
-            if (filter === 'v0.7') return matchesSearch && n.version.includes('0.7');
+            
+            if (filter === 'v0.8') return matchesSearch && n.version.includes('0.8');
+            
             if (filter === 'issues') return matchesSearch && n.health_score < 60;
             return matchesSearch;
         });
@@ -394,10 +441,10 @@ const App = () => {
                         </button>
                         
                         <button 
-                            onClick={() => setFilter('v0.7')} 
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${filter === 'v0.7' ? 'bg-x-primary/20 text-x-primary border-x-primary' : 'bg-white/5 text-gray-400 border-transparent hover:border-white/20 hover:text-white'}`}
+                            onClick={() => setFilter('v0.8')} // Updated state value
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${filter === 'v0.8' ? 'bg-x-primary/20 text-x-primary border-x-primary' : 'bg-white/5 text-gray-400 border-transparent hover:border-white/20 hover:text-white'}`}
                         >
-                            VERIFIED v0.7
+                            VERIFIED v0.8 {/* Updated Label */}
                         </button>
                         
                         <button 
@@ -430,7 +477,7 @@ const App = () => {
                             <tr>
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">Node Identity</th>
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">Client Ver</th>
-                                <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">Uptime</th>
+                                <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219] text-x-primary">Credits</th> {/* NEW COLUMN */}
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">Capacity</th>
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">Performance</th>
                                 <th className="px-4 py-3 text-right border-b border-white/10 bg-[#0F1219]">Score</th>
