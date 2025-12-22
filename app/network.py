@@ -2,12 +2,83 @@ import aiohttp
 import asyncio
 import time
 import re
+import json
+import os
+from collections import defaultdict
 from typing import List, Dict, Optional, Tuple
 from app.config import settings, logger
+import geoip2.database
 
 # Constant for Byte to GB conversion
 GB_CONVERSION = 1024**3
 CREDITS_API_URL = "https://podcredits.xandeum.network/api/pods-credits"
+
+class GeoResolver:
+    """
+    Handles IP-to-Country resolution using local MaxMind GeoLite2 DB.
+    Zero-latency, privacy-preserving, and offline-capable.
+    """
+    def __init__(self, db_path="data/GeoLite2-City.mmdb"):
+        self.db_path = db_path
+        self.reader = None
+        self._load_reader()
+
+    def _load_reader(self):
+        """Initializes the MMDB reader securely."""
+        try:
+            if os.path.exists(self.db_path):
+                self.reader = geoip2.database.Reader(self.db_path)
+                logger.info(f"✅ Loaded GeoIP Database: {self.db_path}")
+            else:
+                logger.warning(f"⚠️ GeoIP Database missing at {self.db_path}. Geo-resolution disabled.")
+        except Exception as e:
+            logger.error(f"❌ Failed to load GeoIP Database: {e}")
+
+    async def resolve_batch(self, ips: List[str]):
+        """
+        Compatibility method. 
+        With local DB, 'batching' is unnecessary as lookups are instant.
+        We keep this to avoid breaking existing calls in get_network_state.
+        """
+        # No-op: Local lookups are done on-demand in get_geo
+        pass 
+
+    def get_geo(self, ip: str) -> Dict:
+        """
+        Instant local lookup. No caching needed (MMDB is optimized for speed).
+        """
+        if not self.reader:
+            return {'country': 'Unknown', 'countryCode': '??'}
+
+        # Filter out local IPs to avoid errors
+        if ip in ["127.0.0.1", "localhost", "::1"]:
+             return {'country': 'Localhost', 'countryCode': 'LH'}
+
+        try:
+            # Perform Lookup
+            response = self.reader.city(ip)
+            
+            return {
+                'country': response.country.name or 'Unknown',
+                'countryCode': response.country.iso_code or '??',
+                'region': response.subdivisions.most_specific.name or '',
+                'city': response.city.name or '',
+                'isp': 'Unknown' # MMDB City version doesn't include ISP data
+            }
+        except geoip2.errors.AddressNotFoundError:
+            # IP not in database
+            return {'country': 'Unknown', 'countryCode': '??'}
+        except Exception as e:
+            logger.debug(f"Geo lookup error for {ip}: {e}")
+            return {'country': 'Unknown', 'countryCode': '??'}
+
+    def close(self):
+        """Clean up file handle on shutdown."""
+        if self.reader:
+            self.reader.close()
+
+# Initialize global resolver
+geo_resolver = GeoResolver()
 
 def parse_version(version_str: str) -> Tuple[int, int, int]:
     """
@@ -176,6 +247,80 @@ async def get_network_state() -> Tuple[List[Dict], Dict[str, int]]:
 
         logger.info(f"Discovered {len(unique_nodes)} unique nodes from {total_pods_found} total pod entries")
         return list(unique_nodes.values()), credits_map
+
+async def get_network_state() -> Tuple[List[Dict], Dict[str, int]]:
+    """
+    Aggregates state with INSIGHT 2 (Visibility) and INSIGHT 3 (Geo)
+    """
+    logger.info(f"Fetching network state from {len(settings.seed_nodes)} seed nodes")
+    
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_node_stats(session, ip) for ip in settings.seed_nodes]
+        credits_task = fetch_pod_credits(session)
+        results = await asyncio.gather(*tasks, credits_task, return_exceptions=True)
+        
+        rpc_results = results[:-1]
+        credits_result = results[-1]
+        credits_map = credits_result if not isinstance(credits_result, Exception) else {}
+        
+        unique_nodes = {}
+        # 🟢 INSIGHT 2: Track Visibility (Witness Count)
+        visibility_counts = defaultdict(int) 
+        
+        total_pods_found = 0
+        all_ips = set()
+        
+        for idx, res in enumerate(rpc_results):
+            if isinstance(res, Exception) or not res: continue
+            
+            total_pods_found += len(res)
+            
+            for pod in res:
+                pubkey = pod.get('pubkey')
+                if not pubkey: continue
+                
+                # 🟢 INSIGHT 2: Increment witness count
+                visibility_counts[pubkey] += 1
+                
+                # Collect IP for Geo Resolution
+                ip_address = pod.get('address', '').split(':')[0]
+                if ip_address: all_ips.add(ip_address)
+
+                # Deduplication Logic
+                if pubkey not in unique_nodes:
+                    unique_nodes[pubkey] = pod
+                else:
+                    curr = unique_nodes[pubkey]
+                    new_ver = parse_version(pod.get('version', '0.0.0'))
+                    curr_ver = parse_version(curr.get('version', '0.0.0'))
+                    
+                    if new_ver > curr_ver:
+                        unique_nodes[pubkey] = pod
+                    elif new_ver == curr_ver:
+                        try:
+                            if float(pod.get('storage_committed') or 0) > float(curr.get('storage_committed') or 0):
+                                unique_nodes[pubkey] = pod
+                        except: pass
+
+        # 🌍 INSIGHT 3: Trigger Background Geo Resolution
+        # We don't await this blocking the main request - we fire and forget (or await if fast)
+        # For first run, it might be slow, so we just trigger it.
+        asyncio.create_task(geo_resolver.resolve_batch(list(all_ips)))
+
+        # Final Data Injection
+        final_nodes = []
+        for pubkey, node in unique_nodes.items():
+            # Inject Visibility
+            node['_visibility'] = visibility_counts[pubkey]
+            
+            # Inject Geo Data (from cache)
+            ip = node.get('address', '').split(':')[0]
+            node['_geo'] = geo_resolver.get_geo(ip)
+            
+            final_nodes.append(node)
+
+        logger.info(f"Discovered {len(final_nodes)} unique nodes. Max visibility: {max(visibility_counts.values()) if visibility_counts else 0}")
+        return final_nodes, credits_map
 
 def calculate_heidelberg_score(node: Dict, net_stats: Dict) -> Dict:
     """
