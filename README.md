@@ -27,7 +27,7 @@
 
 > 📹 **Watch the full walkthrough**:
 
-[![Xandeum Nexus Demo](https://img.shields.io/badge/▶️_Watch_Demo-YouTube-red?style=for-the-badge)](YOUR_VIDEO_LINK_HERE)
+[![Xandeum Nexus Demo](https://img.shields.io/badge/▶️_Watch_Demo-YouTube-red?style=for-the-badge)](https://youtu.be/7cX4LowOmk8)
 
 ### Quick Preview
 
