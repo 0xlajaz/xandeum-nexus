@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from app.network import get_network_state, calculate_heidelberg_score, GB_CONVERSION
 from app.config import settings, logger
 from app.storage import DataManager
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 from fastapi import Request
 
@@ -98,14 +98,27 @@ async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
         max_uptime = max(uptimes) if uptimes else 1
         
         processed_nodes = []
+        location_stats = Counter()
         for node in raw_nodes:
             try:
                 score = calculate_heidelberg_score(node, {"max_uptime": max_uptime})
                 pubkey = str(node.get('pubkey') or 'Unknown')
-                
-                # Inject Official Reputation Credits
+
                 official_credits = credits_map.get(pubkey, 0)
                 
+                # Extract Geo Data
+                geo = node.get('_geo', {})
+                country = geo.get('countryCode', '??')
+                city = geo.get('city', 'Unknown')
+
+                # Create composite key: "US|New York"
+                if country != '??' and city and city != 'Unknown':
+                    loc_key = f"{country}|{city}"
+                else:
+                    loc_key = country 
+                
+                location_stats[loc_key] += 1
+                    
                 processed_nodes.append({
                     "pubkey": pubkey,
                     "short_id": pubkey[:8] + "...",
@@ -118,7 +131,9 @@ async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
                     "reputation_credits": official_credits,
                     "score_breakdown": score['breakdown'],
                     "paging_metrics": score['metrics'],
-                    "latency_ms": node.get('_reporting_latency', 0)
+                    "latency_ms": node.get('_reporting_latency', 0),
+                    "visibility": node.get('_visibility', 1),
+                    "geo": geo
                 })
             except Exception as node_error:
                 logger.error(f"Error processing node {node.get('pubkey', 'unknown')[:8]}: {node_error}")
@@ -142,7 +157,9 @@ async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
             "total_storage_gb": sum(n['storage_gb'] for n in processed_nodes),
             "avg_health": statistics.mean([n['health_score'] for n in processed_nodes]) if processed_nodes else 0,
             "v7_adoption": sum(1 for n in processed_nodes if '0.8' in n['version'] or '0.9' in n['version']),
-            "avg_paging_efficiency": statistics.mean([n['paging_metrics']['hit_rate'] for n in processed_nodes]) if processed_nodes else 0
+            "avg_paging_efficiency": statistics.mean([n['paging_metrics']['hit_rate'] for n in processed_nodes]) if processed_nodes else 0,
+            "geo_distribution": dict(location_stats.most_common(5)),
+            "avg_visibility": statistics.mean([n['visibility'] for n in processed_nodes]) if processed_nodes else 0
         }
         
         # Save to history
