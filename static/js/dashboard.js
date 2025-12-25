@@ -288,8 +288,7 @@ const NodeRow = React.memo(({ node }) => {
     
     // Version validation
     const isSafeVersion = node.version.includes('0.8') || node.version.includes('0.9');
-    #CHANGE THE BOT USERNAME!
-    const BOT_USERNAME = ".........";
+    const BOT_USERNAME = "BOT_USERNAME"; //<-- BOT USERNAME
 
     // Score breakdown with defaults
     const breakdown = node.score_breakdown || {};
@@ -341,8 +340,8 @@ const NodeRow = React.memo(({ node }) => {
                             className="flex items-center gap-2 cursor-pointer group/copy relative px-2 py-1 rounded hover:bg-white/5 transition-all duration-200"
                             title={`Click to copy: ${node.pubkey}`}
                         >
-                            <span className="font-mono text-[10px] break-all text-gray-300 group-hover/copy:text-white transition-colors">
-                                {node.pubkey}
+                            <span className="font-mono text-xs text-gray-300 group-hover/copy:text-white transition-colors">
+                                {node.pubkey.substring(0, 16)}...{node.pubkey.substring(node.pubkey.length - 12)}
                             </span>
                             <span className={`text-x-primary transition-all duration-300 ${copied ? 'opacity-100 scale-100' : 'opacity-0 scale-0 group-hover/copy:opacity-50'}`}>
                                 {copied ? (
@@ -406,6 +405,28 @@ const NodeRow = React.memo(({ node }) => {
                 <div className="max-w-[140px]" title={node.version}>
                     <span className={`px-2.5 py-1 rounded text-xs font-mono border transition-all duration-200 block w-full truncate ${isSafeVersion ? 'border-x-primary/30 text-x-primary bg-x-primary/10' : 'border-x-danger/50 text-x-danger bg-x-danger/10 animate-pulse'}`}>
                         {node.version}
+                    </span>
+                </div>
+            </td>
+
+            {/* Uptime Column */}
+            <td className="py-4 align-middle">
+                <div className="flex flex-col">
+                    <span className={`font-mono text-sm font-medium ${node.uptime_sec > 86400 ? 'text-white' : 'text-yellow-500'}`}>
+                        {formatUptime(node.uptime_sec)}
+                    </span>
+                    <span className="text-[10px] text-gray-600 font-mono">
+                    {node.uptime_sec > 604800 ? 'Stable' : 'Recent'}
+                    </span>
+                </div>
+            </td>
+
+            <td className="py-4 align-middle">
+                <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${node.latency_ms < 100 ? 'bg-x-primary' : node.latency_ms < 300 ? 'bg-yellow-500' : 'bg-x-danger'}`}></span>
+                    <span className="font-mono text-sm text-gray-300">
+                        {node.latency_ms ? node.latency_ms.toFixed(0) : '-'}
+                        <span className="text-gray-600 text-[10px] ml-0.5">ms</span>
                     </span>
                 </div>
             </td>
@@ -514,7 +535,7 @@ const NodeRow = React.memo(({ node }) => {
                             <div className="flex justify-between items-center group/item">
                                 <div className="flex flex-col">
                                     <span className="text-gray-400 group-hover/item:text-white transition-colors">Paging Efficiency</span>
-                                    <span className="text-[10px] text-gray-600">Memory hit rate</span>
+                                    <span className="text-[10px] text-gray-600">Hit Rate - Latency Penalty</span>
                                 </div>
                                 <span className="text-x-accent font-bold">
                                     {pScore}/10
@@ -554,6 +575,7 @@ const App = () => {
     const [filter, setFilter] = useState("all");
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [lastUpdate, setLastUpdate] = useState(null);
+    const [timeRange, setTimeRange] = useState("24h"); // Pilihan: '1h', '24h', '1w'
     
     // Refs for cleanup and chart
     const intervalRef = useRef(null);
@@ -648,7 +670,7 @@ const App = () => {
      */
     const updateChart = useCallback((histData) => {
         const canvas = document.getElementById('mainChart');
-        if (!canvas) return;
+        if (!canvas || !histData) return;
         
         const ctx = canvas.getContext('2d');
         
@@ -657,8 +679,25 @@ const App = () => {
             chartRef.current.destroy();
             chartRef.current = null;
         }
-        
-        // Create gradients
+
+        const now = Date.now() / 1000; // current timestamp in seconds
+        let cutoff = 0;
+
+        switch(timeRange) {
+            case '1h': cutoff = now - (60 * 60); break;
+            case '24h': cutoff = now - (24 * 60 * 60); break;
+            case '1w': cutoff = now - (7 * 24 * 60 * 60); break;
+            default: cutoff = now - (24 * 60 * 60);
+        }
+
+        const validIndices = histData.timestamps.reduce((acc, t, i) => {
+            if (t >= cutoff) acc.push(i);
+            return acc;
+        }, []);
+
+        const filteredTimestamps = validIndices.map(i => histData.timestamps[i]);
+        const filteredHealth = validIndices.map(i => histData.health[i]);
+        const filteredPaging = validIndices.map(i => histData.paging_efficiency[i]);
         const gradientGreen = ctx.createLinearGradient(0, 0, 0, 400);
         gradientGreen.addColorStop(0, 'rgba(0, 255, 163, 0.2)');
         gradientGreen.addColorStop(1, 'rgba(0, 255, 163, 0)');
@@ -670,41 +709,35 @@ const App = () => {
         chartRef.current = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: histData.timestamps.map(t => {
+                labels: filteredTimestamps.map(t => {
                     const date = new Date(t * 1000);
-                    return date.toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit'
-                    });
+                    if (timeRange === '1h') return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    if (timeRange === '1w') return date.toLocaleDateString([], {month: 'short', day: 'numeric'});
+                    return date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' });
                 }),
                 datasets: [
                     {
                         label: 'Network Health',
-                        data: histData.health,
+                        data: filteredHealth,
                         borderColor: '#00FFA3',
                         backgroundColor: gradientGreen,
                         borderWidth: 2,
-                        pointRadius: 3,
+                        pointRadius: timeRange === '1w' ? 1 : 3, 
                         pointBackgroundColor: '#00FFA3',
                         pointBorderColor: '#0F1219',
                         pointBorderWidth: 2,
-                        pointHoverRadius: 5,
                         fill: true,
                         tension: 0.4
                     },
                     {
                         label: 'Paging Efficiency',
-                        data: histData.paging_efficiency.map(v => v * 100),
+                        data: filteredPaging.map(v => v * 100),
                         borderColor: '#7000FF',
                         backgroundColor: gradientPurple,
                         borderWidth: 2,
-                        pointRadius: 2,
+                        pointRadius: timeRange === '1w' ? 0 : 2,
                         pointBackgroundColor: '#7000FF',
                         pointBorderColor: '#0F1219',
-                        pointBorderWidth: 2,
-                        pointHoverRadius: 4,
                         fill: true,
                         tension: 0.4
                     }
@@ -718,21 +751,7 @@ const App = () => {
                     mode: 'index'
                 },
                 plugins: {
-                    legend: {
-                        position: 'top',
-                        align: 'end',
-                        labels: {
-                            color: '#9CA3AF',
-                            font: {
-                                size: 11,
-                                family: 'JetBrains Mono',
-                                weight: '500'
-                            },
-                            boxWidth: 12,
-                            padding: 15,
-                            usePointStyle: true
-                        }
-                    },
+                    legend: { display: false }, 
                     tooltip: {
                         backgroundColor: 'rgba(15, 18, 25, 0.95)',
                         titleColor: '#fff',
@@ -741,56 +760,33 @@ const App = () => {
                         borderWidth: 1,
                         padding: 12,
                         displayColors: true,
-                        callbacks: {
-                            label: function(context) {
-                                let label = context.dataset.label || '';
-                                if (label) {
-                                    label += ': ';
-                                }
-                                label += context.parsed.y.toFixed(1);
-                                if (context.datasetIndex === 1) {
-                                    label += '%';
-                                }
-                                return label;
-                            }
-                        }
                     }
                 },
                 scales: {
                     y: {
-                        grid: {
-                            color: '#1E2330',
-                            drawBorder: false
-                        },
-                        ticks: {
-                            color: '#6B7280',
-                            font: {
-                                size: 10,
-                                family: 'JetBrains Mono'
-                            },
-                            padding: 8
-                        },
+                        grid: { color: '#1E2330', drawBorder: false },
+                        ticks: { color: '#6B7280', font: { size: 10, family: 'JetBrains Mono' } },
                         beginAtZero: true
                     },
                     x: {
-                        grid: {
-                            display: false
-                        },
-                        ticks: {
-                            color: '#6B7280',
-                            font: {
-                                size: 9,
-                                family: 'JetBrains Mono'
-                            },
-                            maxRotation: 0,
-                            autoSkip: true,
-                            maxTicksLimit: 8
+                        grid: { display: false },
+                        ticks: { 
+                            color: '#6B7280', 
+                            font: { size: 9, family: 'JetBrains Mono' },
+                            maxTicksLimit: timeRange === '1h' ? 6 : 8, // UX: Batasi label agar tidak tumpang tindih
+                            maxRotation: 0 
                         }
                     }
                 }
             }
         });
-    }, []);
+    }, [timeRange]); 
+
+    useEffect(() => {
+        if (history) {
+            updateChart(history);
+        }
+    }, [timeRange, history, updateChart]);
 
     // ========== CSV EXPORT ==========
     
@@ -1019,22 +1015,42 @@ const App = () => {
                 {/* Main Performance Chart */}
                 <div className="lg:col-span-2 glass p-6 rounded-xl border border-white/5 hover:border-white/10 transition-all duration-300">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-white font-bold flex items-center gap-2 text-sm tracking-wider">
-                            <span className="w-2 h-2 bg-x-primary rounded-full animate-pulse"></span>
-                            REAL-TIME NETWORK PERFORMANCE
-                        </h3>
-                        {history && history.timestamps && (
-                            <span className="text-[10px] text-gray-600 font-mono">
-                                {history.timestamps.length} data points
-                            </span>
-                        )}
+                        <div>
+                            <h3 className="text-white font-bold flex items-center gap-2 text-sm tracking-wider">
+                                <span className="w-2 h-2 bg-x-primary rounded-full animate-pulse"></span>
+                                NETWORK PERFORMANCE
+                            </h3>
+                            <p className="text-[10px] text-gray-500 font-mono mt-1 ml-4">
+                                Viewing past {timeRange === '1w' ? '7 Days' : timeRange === '24h' ? '24 Hours' : '1 Hour'}
+                            </p>
+                        </div>
+                        <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
+                            {['1h', '24h', '1w'].map((range) => (
+                                <button
+                                    key={range}
+                                    onClick={() => setTimeRange(range)}
+                                    className={`px-3 py-1 rounded-md text-[10px] font-bold font-mono transition-all duration-200 ${
+                                        timeRange === range 
+                                        ? 'bg-x-primary text-black shadow-lg shadow-x-primary/20' 
+                                        : 'text-gray-500 hover:text-white hover:bg-white/5'
+                                    }`}
+                                >
+                                    {range.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
                     </div>
-                    <div className="h-64 w-full">
+                    <div className="h-64 w-full relative">
+                        {!history && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10 backdrop-blur-sm">
+                                <RefreshIcon spinning={true} />
+                            </div>
+                        )}
                         <canvas id="mainChart"></canvas>
                     </div>
                 </div>
                 <div className="h-full">
-            <TopologyMap geoData={data.network.geo_distribution} />
+                    <TopologyMap geoData={data.network.geo_distribution} />
                 </div>
                 {/* Gossip Protocol Status Panel */}
                 <div className="glass p-6 rounded-xl border border-white/5 hover:border-white/10 transition-all duration-300 flex flex-col justify-between">
@@ -1185,6 +1201,12 @@ const App = () => {
                                 </th>
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">
                                     Client Ver
+                                </th>
+                                <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">
+                                    Uptime
+                                </th>
+                                <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219]">
+                                    Latency
                                 </th>
                                 <th className="px-4 py-3 border-b border-white/10 bg-[#0F1219] text-x-primary">
                                     Credits
