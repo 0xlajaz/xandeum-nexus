@@ -323,43 +323,41 @@ async def get_network_state() -> Tuple[List[Dict], Dict[str, int]]:
         return final_nodes, credits_map
 
 def calculate_heidelberg_score(node: Dict, net_stats: Dict) -> Dict:
-    """
-    Implements the 'Heidelberg Score' algorithm to quantify node health.
-    Includes improved validation and error handling.
-    """
     try:
-        # Version Score (40 points)
+        # 1. Version (Keep as is) - 40 pts
         version = str(node.get('version') or '0.0.0')
-        # More robust version checking
         is_valid_version = bool(re.search(r'0\.[89]', version))
         score_version = 40 if is_valid_version else 10
         
-        # Uptime Score (30 points)
+        # 2. Uptime (CHANGE THIS) - 30 pts
+        # Don't compare to "Max Uptime". Compare to a fixed "24 Hour" target.
         uptime = float(node.get('uptime') or 0)
-        if uptime < 0:
-            logger.warning(f"Node {node.get('pubkey', 'unknown')[:8]} has negative uptime: {uptime}")
-            uptime = 0
-        
-        max_uptime = net_stats.get('max_uptime', 1)
-        score_uptime = (uptime / max_uptime) * 30 if max_uptime > 0 else 0
+        target_uptime = 86400 * 7  # Target: 7 Days (604800 seconds)
+        # Cap it at 1.0 so you don't get >30 points
+        uptime_ratio = min(uptime / target_uptime, 1.0)
+        score_uptime = uptime_ratio * 30
 
-        # Storage Score (20 points) - Based on committed capacity
+        # 3. Storage (Keep as is) - 20 pts
         storage_committed = float(node.get('storage_committed') or 0)
-        target_gb = 0.1  # Target: 100MB for testnet
-        storage_gb_committed = storage_committed / GB_CONVERSION
-        score_storage = min((storage_gb_committed / target_gb) * 20, 20)
+        target_gb = 0.1
+        score_storage = min(((storage_committed / GB_CONVERSION) / target_gb) * 20, 20)
         
-        # Paging Score (10 points)
+        # 4. Paging / Performance - 10 pts
+        # Combine Hit Rate + Latency to create "Jitter" (movement) in the chart
         hit_rate = float(node.get('paging_hit_rate') or 0.95)
-        if hit_rate < 0 or hit_rate > 1:
-            logger.warning(f"Invalid hit_rate {hit_rate} for node {node.get('pubkey', 'unknown')[:8]}, clamping to [0,1]")
-            hit_rate = max(0, min(1, hit_rate))
-        score_paging = hit_rate * 10
         
-        total = min(score_version + score_uptime + score_storage + score_paging, 100)
+        # New: Latency Penalty
+        latency = node.get('_reporting_latency', 0)
+        latency_penalty = 0
+        if latency > 500: latency_penalty = 2
+        if latency > 1000: latency_penalty = 5
+        
+        score_paging = max((hit_rate * 10) - latency_penalty, 0)
+        
+        total = score_version + score_uptime + score_storage + score_paging
         
         return {
-            "total": int(total),
+            "total": int(total), # It will now fluctuate based on latency/uptime growth
             "breakdown": {
                 "v0.7_compliance": int(score_version),
                 "uptime_reliability": int(score_uptime),
@@ -368,23 +366,8 @@ def calculate_heidelberg_score(node: Dict, net_stats: Dict) -> Dict:
             },
             "metrics": {
                 "hit_rate": hit_rate,
-                "replication_health": node.get('replication_factor', 3)
+                "latency": latency
             }
         }
-    
-    except Exception as e:
-        logger.error(f"Error calculating score for node {node.get('pubkey', 'unknown')[:8]}: {e}")
-        # Return minimal score on error
-        return {
-            "total": 0,
-            "breakdown": {
-                "v0.7_compliance": 0,
-                "uptime_reliability": 0,
-                "storage_weight": 0,
-                "paging_efficiency": 0
-            },
-            "metrics": {
-                "hit_rate": 0,
-                "replication_health": 0
-            }
-        }
+    except:
+        return {"total": 0, "breakdown": {}, "metrics": {}}
