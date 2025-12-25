@@ -2,8 +2,8 @@
 
 > **Real-time Analytics Platform for Xandeum pNodes** • Built for the Xandeum Storage Network Bounty
 
-[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-Visit_Now-00FFA3?style=for-the-badge)](https://xandeum-nexus-1051632639521.us-central1.run.app)
-[![Version](https://img.shields.io/badge/version-1.1.0--SENTINEL-blue?style=for-the-badge)](https://github.com/yourusername/xandeum-nexus)
+[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-Visit_Now-00FFA3?style=for-the-badge&logo=googlecloud&logoColor=white)](https://xandeum-nexus-1051632639521.us-central1.run.app)
+[![Version](https://img.shields.io/badge/version-1.1.0--SENTINEL-blue?style=for-the-badge)](https://github.com/YOUR_GITHUB_USERNAME/xandeum-nexus)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 
 ---
@@ -14,12 +14,12 @@
 
 ### 🌟 What Makes This Special?
 
-- **🔴 Real-time Network Monitoring**: Live data from gossip protocol across all seed nodes
-- **📊 Intelligent Health Scoring**: Proprietary "Heidelberg Algorithm" for multi-dimensional node analysis
-- **🤖 24/7 Telegram Sentinel Bot**: Smart alerts with severity-based notification intervals
-- **🗺️ Geographic Insights**: Visual network distribution with MaxMind GeoIP integration
-- **📈 Historical Analytics**: Trend analysis with time-series data visualization
-- **⚡ Enterprise Performance**: Deployed on Google Cloud Run with auto-scaling
+- **🔴 Real-time Network Monitoring**: Live data from gossip protocol via high-availability seed nodes.
+- **📊 Intelligent Health Scoring**: Proprietary "Heidelberg Algorithm" that analyzes Version, Uptime, Storage, and Latency.
+- **🤖 24/7 Telegram Sentinel Bot**: Smart alerts with severity-based notification intervals (Offline/Critical/Warning).
+- **🗺️ Geographic Insights**: Visual network distribution with privacy-preserving MaxMind GeoIP integration.
+- **📈 Historical Analytics**: Trend analysis with time-series data visualization.
+- **⚡ Enterprise Performance**: Deployed on Google Cloud Run with server-side caching and auto-scaling.
 
 ---
 
@@ -36,10 +36,10 @@
 https://xandeum-nexus-1051632639521.us-central1.run.app
 
 # Features Showcased:
-✅ Real-time node health monitoring
+✅ Real-time node health monitoring (30s refresh)
 ✅ Interactive data tables with search/filter
-✅ Historical trend charts
-✅ Telegram bot commands
+✅ Historical trend charts (7-day history)
+✅ Telegram bot commands & alerts
 ✅ CSV export functionality
 ```
 
@@ -48,9 +48,9 @@ https://xandeum-nexus-1051632639521.us-central1.run.app
 ## ✨ Key Features
 
 ### 🎛️ **Dashboard Analytics**
-- **Real-time Telemetry**: Live updates every 5 minutes from 9 seed nodes
-- **Health Scoring System**: 100-point scale based on version, uptime, storage, and paging efficiency
-- **Smart Filtering**: View all nodes, v0.8+ compliant, or nodes with issues
+- **Low-Latency Telemetry**: Backend caching ensures instant load times without spamming the network.
+- **Health Scoring System**: 100-point scale based on version compliance, stability, and network latency.
+- **Smart Filtering**: View all nodes, v0.8+ compliant, or diagnose nodes with specific issues.
 - **Advanced Search**: Filter by pubkey, IP address, city, or country
 - **CSV Export**: Download complete node data for offline analysis
 
@@ -74,7 +74,6 @@ The intelligent monitoring assistant that never sleeps:
 - ⚫️ OFFLINE → Alert every 10 minutes
 - 🟢 RECOVERY → Immediate notification
 - 💤 Snooze functionality (24 hours)
-- 🔇 Permanent ignore for non-critical issues
 
 ### 📊 **Heidelberg Health Score**
 
@@ -82,10 +81,10 @@ Our proprietary algorithm evaluates nodes across 4 dimensions:
 
 | Metric | Weight | Criteria |
 |--------|--------|----------|
-| **Version Compliance** | 40 pts | v0.8+ required |
-| **Uptime Reliability** | 30 pts | Normalized against network max |
-| **Storage Capacity** | 20 pts | Target: 100MB minimum |
-| **Paging Efficiency** | 10 pts | Cache hit rate optimization |
+| **Version Compliance** | 40 pts | v0.8+ required for full points |
+| **Uptime Reliability** | 30 pts | Target: 7 Days continuous uptime |
+| **Storage Capacity** | 20 pts | Target: 100MB minimum committed |
+| **Paging Efficiency** | 10 pts | Memory hit rate - Latency penalty |
 
 **Total**: 100 points • **Excellent**: 90+ • **Good**: 75-89 • **Fair**: 50-74 • **Poor**: <50
 
@@ -99,7 +98,7 @@ Our proprietary algorithm evaluates nodes across 4 dimensions:
 ### 📈 **Historical Analytics**
 
 - **Time-series Storage**: Up to 1000 data points per metric
-- **Trend Visualization**: Network health over time
+- **Trend Visualization**: Network health over time (1H, 24H, 1W views).
 - **Metrics Tracked**:
   - Total active nodes
   - Average health score
@@ -305,20 +304,6 @@ Open Telegram → Search @YourSentinelBot → /start
 
 ---
 
-## 📊 Project Statistics
-
-| Metric | Value |
-|--------|-------|
-| **Lines of Code** | ~3,500+ |
-| **API Endpoints** | 3 core + health check |
-| **Bot Commands** | 7 commands |
-| **Data Points Tracked** | 15+ per node |
-| **Update Interval** | 5 minutes |
-| **Max History Storage** | 1,000 snapshots |
-| **Rate Limit** | 30 req/min/IP |
-
----
-
 ## 🎨 Screenshots
 
 ### Main Dashboard
@@ -352,26 +337,11 @@ Open Telegram → Search @YourSentinelBot → /start
 - ✅ Advanced features (Telegram bot, health scoring, geo tracking)
 - ✅ Documentation and deployment guide
 - ✅ Open-source codebase
-
-**Judging Criteria Alignment:**
-- **Functionality**: ✅ Successfully retrieves and displays all pNode data using valid pRPC calls
-- **Clarity**: ✅ Health scoring system, color-coded status indicators, comprehensive tooltips
-- **User Experience**: ✅ Intuitive dashboard, mobile-responsive, real-time updates, search/filter
-- **Innovation**: ✅ Proprietary Heidelberg scoring, Telegram bot integration, geographic insights, historical analytics
-
 ---
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 
