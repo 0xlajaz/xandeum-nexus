@@ -13,6 +13,12 @@ from fastapi import Request
 router = APIRouter()
 data_manager = DataManager(settings.HISTORY_FILE)
 
+CACHE_TTL = 30  # Seconds to hold data in RAM
+_network_cache = {
+    "timestamp": 0,
+    "data": None
+}
+
 # --- RATE LIMITING ---
 # Simple in-memory rate limiter (for production, use Redis)
 request_tracker = defaultdict(list)
@@ -56,67 +62,66 @@ async def health_check():
     }
 
 @router.get("/api/telemetry")
-async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
+async def telemetry_endpoint(request: Request = None): 
     """
     Primary endpoint for fetching real-time network state.
+    Now includes caching to prevent IP Bans and Bankruptcy.
     """
 
+    # 1. Rate Limiting Check
     client_ip = "unknown"
     if request:
-        # Check for X-Forwarded-For header (Standard for Cloud Run/Load Balancers)
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            # The first IP in the list is the real client
             client_ip = forwarded.split(",")[0].strip()
         elif hasattr(request, 'client') and request.client:
             client_ip = request.client.host
     
     if not check_rate_limit(client_ip):
         logger.warning(f"Rate limit exceeded for IP: {client_ip}")
-        raise HTTPException(
-            status_code=429, 
-            detail="Rate limit exceeded. Please try again in a minute."
-        )
+        raise HTTPException(status_code=429, detail="Rate limit exceeded.")
+
+    # --- THE FIX: CHECK CACHE FIRST (The Anti-Ban Shield) ---
+    global _network_cache
+    current_time = time.time()
     
+    # If cache is valid (less than 30s old), serve it immediately
+    if _network_cache["data"] and (current_time - _network_cache["timestamp"] < CACHE_TTL):
+        # logger.info(f"🚀 Serving telemetry from cache (Age: {int(current_time - _network_cache['timestamp'])}s)")
+        return JSONResponse(_network_cache["data"])
+
+    # 2. Cache Expired? Fetch Fresh Data
     try:
-        # Fetch both Network State AND Official Credits
         raw_nodes, credits_map = await get_network_state()
         
         if not raw_nodes:
             logger.warning("No nodes returned from network state fetch")
+            # Return empty structure (don't cache errors if possible, or cache briefly)
             return JSONResponse({
-                "timestamp": time.time(),
-                "network": {
-                    "total_nodes": 0, "total_storage_gb": 0, "avg_health": 0, 
-                    "v7_adoption": 0, "avg_paging_efficiency": 0
-                },
-                "nodes": [],
-                "warning": "No nodes available. Network may be offline."
+                "timestamp": current_time,
+                "network": {"total_nodes": 0, "avg_health": 0}, 
+                "nodes": [], 
+                "warning": "Network offline"
             })
 
+        # 3. Process the Nodes (Your existing logic)
         uptimes = [float(n.get('uptime') or 0) for n in raw_nodes]
         max_uptime = max(uptimes) if uptimes else 1
         
         processed_nodes = []
         location_stats = Counter()
+        
         for node in raw_nodes:
             try:
+                # ... (Keep your existing node processing logic exactly as is) ...
                 score = calculate_heidelberg_score(node, {"max_uptime": max_uptime})
                 pubkey = str(node.get('pubkey') or 'Unknown')
-
                 official_credits = credits_map.get(pubkey, 0)
                 
-                # Extract Geo Data
                 geo = node.get('_geo', {})
                 country = geo.get('countryCode', '??')
                 city = geo.get('city', 'Unknown')
-
-                # Create composite key: "US|New York"
-                if country != '??' and city and city != 'Unknown':
-                    loc_key = f"{country}|{city}"
-                else:
-                    loc_key = country 
-                
+                loc_key = f"{country}|{city}" if (country != '??' and city != 'Unknown') else country
                 location_stats[loc_key] += 1
                     
                 processed_nodes.append({
@@ -136,22 +141,9 @@ async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
                     "geo": geo
                 })
             except Exception as node_error:
-                logger.error(f"Error processing node {node.get('pubkey', 'unknown')[:8]}: {node_error}")
-                continue  # Skip problematic nodes but continue processing others
+                continue
 
-        if not processed_nodes:
-            logger.error("All nodes failed to process")
-            return JSONResponse({
-                "timestamp": time.time(),
-                "network": {
-                    "total_nodes": 0, "total_storage_gb": 0, "avg_health": 0, 
-                    "v7_adoption": 0, "avg_paging_efficiency": 0
-                },
-                "nodes": [],
-                "error": "Failed to process any nodes"
-            }, status_code=500)
-
-        # Calculate network statistics with safety checks
+        # 4. Calculate Stats
         net_stats = {
             "total_nodes": len(processed_nodes),
             "total_storage_gb": sum(n['storage_gb'] for n in processed_nodes),
@@ -162,26 +154,28 @@ async def telemetry_endpoint(request: Request = None): # <--- Type hint Request
             "avg_visibility": statistics.mean([n['visibility'] for n in processed_nodes]) if processed_nodes else 0
         }
         
-        # Save to history
+        # 5. Construct Response
+        response_payload = {
+            "timestamp": current_time,
+            "network": net_stats,
+            "nodes": sorted(processed_nodes, key=lambda x: x['health_score'], reverse=True)
+        }
+
+        # --- UPDATE CACHE ---
+        _network_cache["timestamp"] = current_time
+        _network_cache["data"] = response_payload
+
+        # 6. Save History (Safe now due to storage.py throttle + cache)
         try:
-            # WAS: data_manager.save_history(net_stats)
-            # CHANGE TO:
             await data_manager.save_history_async(net_stats) 
         except Exception as storage_error:
             logger.error(f"Failed to save history: {storage_error}")
         
-        return JSONResponse({
-            "timestamp": time.time(),
-            "network": net_stats,
-            "nodes": sorted(processed_nodes, key=lambda x: x['health_score'], reverse=True)
-        })
+        return JSONResponse(response_payload)
 
     except Exception as e:
         logger.error(f"Critical error in telemetry endpoint: {e}", exc_info=True)
-        return JSONResponse(
-            {"error": "Internal Server Error", "detail": str(e)}, 
-            status_code=500
-        )
+        return JSONResponse({"error": "Internal Server Error", "detail": str(e)}, status_code=500)
 
 @router.get("/api/history/trend")
 async def history_trend_endpoint():
