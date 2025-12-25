@@ -29,6 +29,21 @@
 
 [![Xandeum Nexus Demo](https://img.shields.io/badge/▶️_Watch_Demo-YouTube-red?style=for-the-badge)](https://youtu.be/7cX4LowOmk8)
 
+## 🎨 Screenshots
+
+### Main Dashboard
+![Dashboard Overview](dashboard.png)
+*Real-time network monitoring with health scores and geographic distribution*
+
+### Node Details
+![Node Details](nodes.png)
+*Comprehensive node analysis with score breakdown and diagnostics*
+
+### Telegram Bot
+![Telegram Bot](bot.png)
+*Smart alerts and interactive commands*
+---
+
 ### Quick Preview
 
 ```bash
@@ -301,28 +316,6 @@ TELEGRAM_BOT_USERNAME=YourSentinelBot
 Open Telegram → Search @YourSentinelBot → /start
 /watch 5xHn7K2mPxQ9vK8...
 ```
-
----
-
-## 🎨 Screenshots
-
-### Main Dashboard
-![Dashboard Overview](screenshots/dashboard.png)
-*Real-time network monitoring with health scores and geographic distribution*
-
-### Node Details
-![Node Details](screenshots/node-details.png)
-*Comprehensive node analysis with score breakdown and diagnostics*
-
-### Telegram Bot
-![Telegram Bot](screenshots/telegram-bot.png)
-*Smart alerts and interactive commands*
-
-### Historical Trends
-![Trends Chart](screenshots/trends.png)
-*Network health evolution over time*
-
-> 📝 **Note**: Add screenshots to `/screenshots` directory
 
 ---
 
